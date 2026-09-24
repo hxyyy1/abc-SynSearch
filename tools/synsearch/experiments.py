@@ -13,6 +13,8 @@ from pathlib import Path
 import subprocess
 import time
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 METHODS = ('mcts', 'hybrid', 'sa', 'ucb1', 'ucb1-prefix', 'linucb')
 DEFAULT_ACTIONS = 'balance,rewrite,rewrite-z,refactor,refactor-z,resub,resub-z'
 
@@ -80,8 +82,9 @@ def summarize(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('prepare-data', 'run-search', 'summarize', 'grid-search', 'ablation', 'evaluate-actions'))
-    parser.add_argument('--abc-bin', type=Path, default=Path(__file__).resolve().parents[2] / 'abc')
-    parser.add_argument('--dataset-root', type=Path, default=Path('benchmarks'))
+    parser.add_argument('--abc-bin', type=Path, default=PROJECT_ROOT / 'abc')
+    parser.add_argument('--dataset-root', type=Path, default=PROJECT_ROOT / 'benchmarks',
+                        help='BLIF dataset directory (default: this repository\'s benchmarks/)')
     parser.add_argument('--design', action='append')
     parser.add_argument('--workdir', type=Path, default=Path('.synsearch_work'))
     parser.add_argument('--algorithm', choices=(*METHODS, 'all'), default='mcts')

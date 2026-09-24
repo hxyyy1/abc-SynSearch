@@ -99,12 +99,19 @@ AND count and logic depth are structural AIG metrics, not mapped area or timing.
 
 The optional Python 3.10+ driver orchestrates complete native runs. Search policy
 and candidate evaluations remain inside ABC. It does not require NumPy.
-Supply your own BLIF dataset; third-party EPFL/VTR benchmark files are not copied
-into this repository without their distribution notices.
+The original SynSearch dataset is included under `benchmarks/`, preserving its
+EPFL and VTR directory structure and all supplied circuit representations.
+The driver recursively reads BLIF files only: 20 from `benchmarks/EPFL/` and
+6 from `benchmarks/VTR/`. Its default dataset path is resolved relative to this
+repository, so it also works when invoked from another working directory.
+Use `--dataset-root benchmarks/EPFL` or `--dataset-root benchmarks/VTR` to select
+a subset when running from the repository root; custom paths remain supported.
+These circuit files were copied unchanged from the original project's dataset;
+the source-code license does not relicense third-party benchmarks.
 
 ```sh
-python3 tools/synsearch/experiments.py prepare-data --dataset-root /path/to/benchmarks
-python3 tools/synsearch/experiments.py run-search --dataset-root /path/to/benchmarks --design adder.blif --algorithm all --sequence-length 4 --search-iterations 4 --episodes 4 --external-monitor
+python3 tools/synsearch/experiments.py prepare-data
+python3 tools/synsearch/experiments.py run-search --design adder.blif --algorithm all --sequence-length 4 --search-iterations 4 --episodes 4 --external-monitor
 python3 tools/synsearch/experiments.py summarize
 ```
 
@@ -118,11 +125,11 @@ Additional workflows:
 
 ```sh
 # grid.json: {"ucb-c": [0.2, 0.4, 1.0], "episodes": [10, 20]}
-python3 tools/synsearch/experiments.py grid-search --algorithm ucb1 --dataset-root /path/to/benchmarks --grid-config grid.json --workdir .synsearch_work/grid
+python3 tools/synsearch/experiments.py grid-search --algorithm ucb1 --grid-config grid.json --workdir .synsearch_work/grid
 # Baseline plus one omitted action per trial
-python3 tools/synsearch/experiments.py ablation --dataset-root /path/to/benchmarks --workdir .synsearch_work/ablation
+python3 tools/synsearch/experiments.py ablation --workdir .synsearch_work/ablation
 # One-step action measurements; --result-path also evaluates saved search prefixes
-python3 tools/synsearch/experiments.py evaluate-actions --dataset-root /path/to/benchmarks --workdir .synsearch_work/actions
+python3 tools/synsearch/experiments.py evaluate-actions --workdir .synsearch_work/actions
 ```
 
 `--config-json` accepts an object of native command options without leading `--`.
