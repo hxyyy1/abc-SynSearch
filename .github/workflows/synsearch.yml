@@ -1,0 +1,17 @@
+name: Native SynSearch
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libreadline-dev
+      - name: Build
+        run: make -j2
+      - name: Test native search
+        run: python3 -m unittest discover -s tests/synsearch -v
+      - name: Check source formatting errors
+        run: git diff --check

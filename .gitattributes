@@ -25,9 +25,6 @@ README text
 .gitignore text
 .gitattributes text
 
-*.dsp text eol=crlf
-*.dsw text eol=crlf
-
 *.aig binary
 *.lib binary
 *.dll binary

@@ -1,139 +1,156 @@
-[![.github/workflows/build-posix.yml](https://github.com/berkeley-abc/abc/actions/workflows/build-posix.yml/badge.svg)](https://github.com/berkeley-abc/abc/actions/workflows/build-posix.yml)
-[![.github/workflows/build-windows.yml](https://github.com/berkeley-abc/abc/actions/workflows/build-windows.yml/badge.svg)](https://github.com/berkeley-abc/abc/actions/workflows/build-windows.yml)
-[![.github/workflows/build-posix-cmake.yml](https://github.com/berkeley-abc/abc/actions/workflows/build-posix-cmake.yml/badge.svg)](https://github.com/berkeley-abc/abc/actions/workflows/build-posix-cmake.yml)
+# ABC-SynSearch
 
-# ABC: System for Sequential Logic Synthesis and Formal Verification
+Native search-based logic synthesis in Berkeley ABC. Six search algorithms are
+implemented in C++ and compiled into the `synsearch` ABC command. Candidate
+networks are evaluated in the same process and cached in memory; search does not
+launch an ABC executable, invoke Python, or write intermediate AIG files.
 
-ABC is always changing but the current snapshot is believed to be stable.
+This project ports the algorithms from SynSearch into an ABC source fork. It
+retains their distinct objectives and selection rules. See
+[porting and compatibility](docs/PORTING.md) for the exact scope and differences.
 
-## Compiling
+## Build
 
-To compile the ABC executable, run `make`. To compile ABC as a static library,
-run `make libabc.a`.
-
-When ABC is used as a static library, `Abc_Start()` and `Abc_Stop()` are
-provided for starting and quitting a single ABC session in the calling
-application. A simple demo program (file src/demo.c) shows how to
-create a stand-alone program performing DAG-aware AIG rewriting, by calling 
-APIs of ABC compiled as a static library.
-
-Independent ABC sessions can run concurrently in different threads on Linux
-and macOS. Existing single-threaded applications using `Abc_Start()` and
-`Abc_Stop()` continue to work unchanged. Concurrent applications should create
-one `Abc_Frame_t` per session with `Abc_FrameCreate()`, execute commands using
-that frame, and release it with `Abc_FrameDestroy()`; the same frame must not be
-used concurrently by multiple threads. Scoped calls to
-`Abc_FrameEnter()`/`Abc_FrameLeave()` establish the current frame when invoking
-APIs outside command execution that depend on it. See `src/runabc.c` for
-single-threaded and concurrent embedding examples. Some obsolete commands still
-use shared process state and are not safe to run in concurrent sessions.
-
-Build and run the single-threaded demo from the repository root with:
+Linux / WSL Ubuntu, GCC or Clang with C++17, GNU Make, and readline development
+headers are required for the default build. Python is only needed for optional
+experiment tools and integration tests.
 
 ```sh
-gcc -Wall -O2 -c src/demo.c -o demo.o
-g++ -o demo demo.o libabc.a -lm -ldl -lreadline -lpthread
-./demo i10.aig
+sudo apt-get install build-essential libreadline-dev
+make -j8
+./abc -s -c 'synsearch --help'
 ```
 
-Build and run the MiniAIG/MiniLUT embedding example with:
+A build without readline is supported: `make ABC_USE_NO_READLINE=1 -j8`.
+Use a clean build when changing compiler flags.
+
+CMake is also supported:
 
 ```sh
-gcc -Wall -O2 -Isrc -c src/runabc.c -o runabc.o
-g++ -o runabc runabc.o libabc.a -lm -ldl -lreadline -lpthread
-./runabc i10.aig
-./runabc -t 4 i10.aig
+cmake -S . -B build -DABC_SKIP_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j8
+./build/abc -s -c 'synsearch --help'
 ```
 
-The last command compares four concurrent sessions with a single-threaded
-baseline. If ABC is built with `ABC_USE_NO_READLINE=1`, omit `-lreadline`.
-Explicitly single-threaded configurations may disable thread-local frame
-selection with `ABC_USE_NO_THREAD_LOCAL=1`.
+`ABC_SKIP_TESTS=ON` skips the upstream GoogleTest dependency download; it does
+not disable the standalone SynSearch integration tests below.
 
-To run the demo program, give it a file with the logic network in AIGER or BLIF. For example:
-
-    [...] ~/abc> demo i10.aig
-    i10          : i/o =  257/  224  lat =    0  and =   2396  lev = 37
-    i10          : i/o =  257/  224  lat =    0  and =   1851  lev = 35
-    Networks are equivalent.
-    Reading =   0.00 sec   Rewriting =   0.18 sec   Verification =   0.41 sec
-
-The same can be produced by running the binary in the command-line mode:
-
-    [...] ~/abc> ./abc
-    UC Berkeley, ABC 1.01 (compiled Oct  6 2012 19:05:18)
-    abc 01> r i10.aig; b; ps; b; rw -l; rw -lz; b; rw -lz; b; ps; cec
-    i10          : i/o =  257/  224  lat =    0  and =   2396  lev = 37
-    i10          : i/o =  257/  224  lat =    0  and =   1851  lev = 35
-    Networks are equivalent.
-
-or in the batch mode:
-
-    [...] ~/abc> ./abc -c "r i10.aig; b; ps; b; rw -l; rw -lz; b; rw -lz; b; ps; cec"
-    ABC command line: "r i10.aig; b; ps; b; rw -l; rw -lz; b; rw -lz; b; ps; cec".
-    i10          : i/o =  257/  224  lat =    0  and =   2396  lev = 37
-    i10          : i/o =  257/  224  lat =    0  and =   1851  lev = 35
-    Networks are equivalent.
-
-### Compiling as C or C++
-
-ABC can be compiled with a C or C++ compiler.
-
-- To compile as C code, use the default Make configuration.
-- To compile as C++ in a namespace, run `make ABC_USE_NAMESPACE=xxx`.
-
-### Building a shared library
-
-Build the shared library as position-independent code with:
+## Quick start
 
 ```sh
-make ABC_USE_PIC=1 libabc.so
+./abc -s -c 'read i10.aig; strash; synsearch --algorithm mcts --steps 4 --search-iterations 4 --output result.json; cec i10.aig; write_aiger optimized.aig'
 ```
 
-### Building with CMake
+The command operates on the current strashed network and installs the selected
+network on success. `print_stats`, `cec`, `write_blif`, and `write_aiger` can be
+used afterward. A failed required evaluation restores the original network.
+Use `cec -n input.blif optimized.aig` when AIG serialization has omitted signal
+names and matching by input/output order is appropriate.
 
-ABC also supports CMake builds. The default CMake configuration builds the
-executable and regression tests:
+| Algorithm | `--algorithm` | Native behavior |
+| --- | --- | --- |
+| AlphaSyn | `mcts` | Uniform-prior MCTS, discounted max-return backup, subtree reuse |
+| HybridSyn | `hybrid` | Per-position UCB1 warmup, top-k prefix handoff, MCTS continuation |
+| SASyn | `sa` | Full-sequence annealing, replace/swap/block moves, automatic temperature |
+| Global UCB1 | `ucb1` | One bandit, complete-episode reward, unique-arm updates |
+| Prefix UCB1 | `ucb1-prefix` | One bandit per position, immediate rewards, cached prefixes |
+| LinUCB | `linucb` | Per-position contextual policies, rollout features, tail selection and backtracking |
 
 ```sh
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
+./abc -s -c 'read i10.aig; strash; synsearch --algorithm hybrid --steps 10 --warmup-steps 3 --warmup-episodes 20 --warmup-top-k 2 --search-iterations 20'
+./abc -s -c 'read i10.aig; strash; synsearch --algorithm sa --steps 10 --search-iterations 100 --seed 0'
+./abc -s -c 'read i10.aig; strash; synsearch --algorithm ucb1 --steps 10 --episodes 20 --ucb-c 1.0'
+./abc -s -c 'read i10.aig; strash; synsearch --algorithm ucb1-prefix --steps 10 --episodes 20 --ucb-c 0.4'
+./abc -s -c 'read i10.aig; strash; synsearch --algorithm linucb --steps 10 --episodes 20 --alpha 1.5 --lambda 1 --long-term-rollouts 1 --long-term-horizon 3'
 ```
 
-## Bug Reporting
+### Parameters and actions
 
-Please reproduce bugs and unexpected behavior using the latest version of ABC
-available from https://github.com/berkeley-abc/abc.
+`--steps` and `--sequence-length` are aliases. MCTS iterations apply at every
+selected step; SA iterations count total annealing proposals; bandit methods use
+`--episodes`. Equal numerical budgets do not imply equal work.
 
-If the problem persists, provide the following information:
+Default lengths are 24 for MCTS/HybridSyn/SA and 10 for the bandit methods.
+MCTS uses 64 iterations, SA uses 1000 iterations, UCB1 uses 50 episodes, and LinUCB uses 150 episodes. Global UCB1 defaults to `--ucb-c 2.0`; prefix UCB1 and HybridSyn use 0.4.
+Hybrid warmup defaults to 4 steps, 64 episodes, and one retained candidate.
 
-1. ABC version or Git commit.
-2. Operating system, distribution, architecture, and compiler version.
-3. The exact command line and complete error message.
-4. The output of `ldd abc` on Linux, or the corresponding dependency report
-   on another platform, when relevant.
-5. Versions of relevant tools and libraries.
+The default actions are `balance`, `rewrite`, `rewrite-z`, `refactor`,
+`refactor-z`, `resub`, and `resub-z`. Extra supported action labels are `fraig`,
+`fx`, `mfs`, `dsd`, `dch`, `extract`, `extract-a`, and `collapse`. Labels with `-z`
+expand to the corresponding ABC command with the `-z` flag. Some extra operators
+have network-type preconditions and can fail; they are not silently substituted.
 
-## Troubleshooting
+```sh
+./abc -s -c 'read i10.aig; strash; synsearch --actions balance,rewrite,rewrite-z --steps 4 --search-iterations 4 --debug-search --output result.json --csv summary.csv'
+```
 
-1. If compilation does not start because of the cyclic dependency check, run
-   `find . -type f -exec touch "{}" \;` and rebuild.
-2. If readline is unavailable, install its development package or build with
-   `make ABC_USE_NO_READLINE=1`.
-3. If pthreads are unavailable, build without pthread support using
-   `make ABC_USE_NO_PTHREADS=1`. Concurrent embedding requires pthread support.
-4. On systems where readline depends on curses, include the appropriate curses
-   library in `ABC_READLINE_LIBRARIES`.
+`--help` lists all controls, including objective weights, exploration constants,
+annealing temperatures, rollout limits, convergence streak, and backtrack threshold.
+The search is deterministic for a fixed native build, input, options, and seed.
+LinUCB random tie-breaking is not bit-for-bit NumPy compatible.
 
-The following tutorial is kindly offered by Ana Petkovska from EPFL:
-https://www.dropbox.com/s/qrl9svlf0ylxy8p/ABC_GettingStarted.pdf
+## Results and experiments
 
-## Final Remarks
+`--output` writes a JSON result containing the configuration, action labels,
+expanded commands, initial/final AND and level counts, runtime, evaluation/cache
+counters, and optional event trace. `--csv` appends one summary row, adding the
+header to an empty file. Parent output directories must already exist.
+AND count and logic depth are structural AIG metrics, not mapped area or timing.
 
-ABC includes CMake-based regression tests, which run in continuous integration
-on supported configurations. The suite is not exhaustive, so bug reports
-should include a small reproducer whenever possible.
+The optional Python 3.10+ driver orchestrates complete native runs. Search policy
+and candidate evaluations remain inside ABC. It does not require NumPy.
+Supply your own BLIF dataset; third-party EPFL/VTR benchmark files are not copied
+into this repository without their distribution notices.
 
-This system is maintained by Alan Mishchenko <alanmi@berkeley.edu>. Consider also 
-using ZZ framework developed by Niklas Een: https://bitbucket.org/niklaseen/abc-zz (or https://github.com/berkeley-abc/abc-zz)
+```sh
+python3 tools/synsearch/experiments.py prepare-data --dataset-root /path/to/benchmarks
+python3 tools/synsearch/experiments.py run-search --dataset-root /path/to/benchmarks --design adder.blif --algorithm all --sequence-length 4 --search-iterations 4 --episodes 4 --external-monitor
+python3 tools/synsearch/experiments.py summarize
+```
+
+The driver writes a SHA-256 manifest, per-run JSON/log/AIG files, and per-method
+CSV summaries under `.synsearch_work/`. It refuses to overwrite an existing run
+folder. Choose a fresh `--workdir` for a new experiment. `--external-monitor`
+uses GNU `time` to measure the whole ABC process and peak RSS in KiB; native
+JSON runtime otherwise measures search only.
+
+Additional workflows:
+
+```sh
+# grid.json: {"ucb-c": [0.2, 0.4, 1.0], "episodes": [10, 20]}
+python3 tools/synsearch/experiments.py grid-search --algorithm ucb1 --dataset-root /path/to/benchmarks --grid-config grid.json --workdir .synsearch_work/grid
+# Baseline plus one omitted action per trial
+python3 tools/synsearch/experiments.py ablation --dataset-root /path/to/benchmarks --workdir .synsearch_work/ablation
+# One-step action measurements; --result-path also evaluates saved search prefixes
+python3 tools/synsearch/experiments.py evaluate-actions --dataset-root /path/to/benchmarks --workdir .synsearch_work/actions
+```
+
+`--config-json` accepts an object of native command options without leading `--`.
+The comparison utility is retained from SynSearch and accepts the generated CSVs:
+
+```sh
+python3 tools/compare_algorithm_summaries.py --summary MCTS=.synsearch_work/trial-0/mcts-summary.csv --summary UCB1=.synsearch_work/trial-0/ucb1-summary.csv --print-report
+```
+
+Use external monitoring consistently when comparing resource metrics. Keep
+circuit sets, builds, machine, seeds, and budgets in your experiment records.
+
+## Test and contribute
+
+```sh
+python3 -m unittest discover -s tests/synsearch -v
+# To test a CMake build:
+ABC_BIN="$PWD/build/abc" python3 -m unittest discover -s tests/synsearch -v
+```
+
+Tests exercise all six algorithms, deterministic replay, repeated searches,
+invalid options, zero-length search, JSON/CSV export, and CEC equivalence.
+[CONTRIBUTING.md](CONTRIBUTING.md) explains development and reporting requirements.
+
+## License and provenance
+
+ABC retains its University of California license in [copyright.txt](copyright.txt).
+SynSearch additions are available under the MIT license in [LICENSE](LICENSE).
+Bundled upstream components keep their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). No third-party benchmark license
+is implied by the source-code license.

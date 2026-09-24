@@ -1,13 +1,4 @@
-DebugLib/
-DebugExe/
-DebugExt/
-
-ReleaseLib/
-ReleaseExe/
-ReleaseExt/
-
 _/
-_TEST/
 /sn
 /sn.exe
 temp/
@@ -29,20 +20,8 @@ src/aig/ddb/
 
 *.[od]
 
-*.ncb
-*.opt
-*.plg
-
 *.zip
 *.DS_Store
-
-abcspaceext.dsw
-abcext.dsp
-
-abcexe.vcproj*
-abclib.vcproj*
-/abcspace.sln
-abcspace.suo
 
 *.pyc
 
@@ -67,3 +46,22 @@ tags
 /cmake
 /cscope
 abc.history
+
+# Native SynSearch source and project documentation
+!src/extSynSearch/
+!src/extSynSearch/*.cpp
+!src/extSynSearch/*.h
+!src/extSynSearch/module.make
+!docs/
+!docs/**
+.synsearch_work/
+__pycache__/
+/libabc.so
+
+.compare_results/
+/result.json
+/optimized.aig
+/summary.csv
+
+# Optional reference-comparison caches
+.mabsyn_work/

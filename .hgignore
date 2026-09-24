@@ -1,14 +1,5 @@
 syntax:glob
 
-DebugLib/
-DebugExe/
-DebugExt/
-
-ReleaseLib/
-ReleaseExe/
-ReleaseExt/
-
-_TEST/
 lib/abc*
 lib/m114*
 lib/bip*
@@ -25,19 +16,7 @@ src/aig/ddb/
 
 *.[od]
 
-*.ncb
-*.opt
-*.plg
-
 *.zip
-
-abcspaceext.dsw
-abcext.dsp
-
-abcexe.vcproj*
-abclib.vcproj*
-abcspace.sln
-abcspace.suo
 
 *.pyc
 

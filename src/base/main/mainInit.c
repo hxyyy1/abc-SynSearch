@@ -20,6 +20,7 @@
 
 #include "base/abc/abc.h"
 #include "mainInt.h"
+#include "extSynSearch/synsearch.h"
 
 ABC_NAMESPACE_IMPL_START
  
@@ -113,6 +114,7 @@ void Abc_FrameInit( Abc_Frame_t * pAbc )
     Cmd_CommandExecute( pAbc, "set checkread" ); 
     Io_Init( pAbc );
     Abc_Init( pAbc );
+    SynSearch_Init( pAbc );
     If_Init( pAbc );
     Map_Init( pAbc );
     Mio_Init( pAbc );
