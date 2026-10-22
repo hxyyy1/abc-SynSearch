@@ -30,7 +30,7 @@ static const Action catalog[] = {
     {"extract","extract"}, {"extract-a","extract -a"}, {"collapse","collapse; strash"}
 };
 struct Config {
-    std::string method="mcts", output, csv;
+    std::string method="mcts", objective="legacy", output, csv;
     int length=24, iterations=64, episodes=50, seed=0;
     int warmup=4, warmepisodes=64, topk=1, rollouts=1, horizon=3, streak=3;
     double cpuct=1, discount=.9, ucb=.4, aw=.5, lw=.2, temperature=-1, mintemp=.001, penalty=-1;
@@ -66,13 +66,21 @@ struct Entry { Network net; Stats s; bool valid=false; };
 static double signedGain(int old, int now, double base) {
     double r=std::sqrt(std::abs(double(old)-now)/base); return old>now ? r : -r;
 }
-static double reward(Stats a, Stats b, double an, double ln) {
+static double reward(Stats a, Stats b, double an, double ln, const Config &c) {
+    if(c.objective=="nodes")return signedGain(a.nodes,b.nodes,an);
+    if(c.objective=="level")return signedGain(a.level,b.level,ln);
     return (5*signedGain(a.nodes,b.nodes,an)+2*signedGain(a.level,b.level,ln))/7;
 }
 static double cost(Stats base, Stats s, double aw=5, double lw=2) {
     return (aw*double(s.nodes)/std::max(base.nodes,1)+lw*double(s.level)/std::max(base.level,1))/(aw+lw);
 }
-static bool better(Stats a,Stats b) { return a.nodes<b.nodes || (a.nodes==b.nodes && a.level<b.level); }
+static bool better(Stats a,Stats b,const Config &c) {
+    if(c.objective=="level")return a.level<b.level || (a.level==b.level && a.nodes<b.nodes);
+    return a.nodes<b.nodes || (a.nodes==b.nodes && a.level<b.level);
+}
+static double branchCost(Stats base,Stats s,const Config &c) {
+    return c.objective=="legacy" ? cost(base,s) : cost(base,s,c.aw,c.lw);
+}
 static std::string quote(const std::string &s) {
     std::ostringstream o; o << '"';
     for(unsigned char c:s) {
@@ -170,7 +178,7 @@ static void expand(Engine &e,Node &n) {
     for(size_t a=0;a<e.c.actions.size();++a) {
         Seq p=n.prefix;p.push_back(int(a));Entry &v=e.eval(p);
         if(!v.valid){e.failed=true;return;}
-        Edge edge;edge.action=int(a);edge.r=reward(n.s,v.s,e.an,e.ln);
+        Edge edge;edge.action=int(a);edge.r=reward(n.s,v.s,e.an,e.ln,e.c);
         edge.child.reset(new Node);edge.child->prefix=p;edge.child->s=v.s;n.edges.push_back(std::move(edge));
     } recompute(n,e.c.discount);
 }
@@ -229,12 +237,12 @@ static Seq hybrid(Engine &e) {
     int steps=std::min(e.c.warmup,e.c.length);if(!steps)return mcts(e,{});
     std::vector<Bandit> bs;for(int i=0;i<steps;++i)bs.emplace_back(int(e.c.actions.size()),e.c.seed+i);
     std::vector<Seq> candidates;
-    auto less=[&](const Seq&a,const Seq&b){double x=cost(e.initial,e.eval(a).s),y=cost(e.initial,e.eval(b).s);return x!=y?x<y:e.lexless(a,b);};
+    auto less=[&](const Seq&a,const Seq&b){double x=branchCost(e.initial,e.eval(a).s,e.c),y=branchCost(e.initial,e.eval(b).s,e.c);return x!=y?x<y:e.lexless(a,b);};
     for(int ep=0;ep<e.c.warmepisodes;++ep) {
         Seq p;Stats prev=e.initial;bool ok=true;
-        for(int s=0;s<steps;++s){int a=bs[s].select(e.c.ucb);p.push_back(a);Entry &v=e.eval(p);double r=v.valid?reward(prev,v.s,e.an,e.ln):-1;bs[s].update(a,r);if(!v.valid){ok=false;break;}prev=v.s;}
+        for(int s=0;s<steps;++s){int a=bs[s].select(e.c.ucb);p.push_back(a);Entry &v=e.eval(p);double r=v.valid?reward(prev,v.s,e.an,e.ln,e.c):-1;bs[s].update(a,r);if(!v.valid){ok=false;break;}prev=v.s;}
         if(ok && std::find(candidates.begin(),candidates.end(),p)==candidates.end()){candidates.push_back(p);std::sort(candidates.begin(),candidates.end(),less);if(int(candidates.size())>e.c.topk)candidates.pop_back();}
-        e.event("warmup_episode",ep+1,p,ok?cost(e.initial,prev):-1);
+        e.event("warmup_episode",ep+1,p,ok?branchCost(e.initial,prev,e.c):-1);
     }
     if(candidates.empty())candidates.push_back({});
     Seq best;bool first=true;
@@ -295,9 +303,9 @@ static Seq linucb(Engine &e) {
                     Seq p=current;std::vector<Stats> samples;bool ok=true;
                     for(int d=0;d<h;++d){p.push_back(d?randint(rollout,n):a);Entry &v=e.eval(p);if(!v.valid){ok=false;break;}samples.push_back(v.s);}
                     if(!ok)continue;
-                    for(int d=0;d<h;++d){auto found=depthbest.find(step+d+1);if(found==depthbest.end()||better(samples[d],found->second.s))depthbest[step+d+1]={samples[d],step};}
+                    for(int d=0;d<h;++d){auto found=depthbest.find(step+d+1);if(found==depthbest.end()||better(samples[d],found->second.s,c))depthbest[step+d+1]={samples[d],step};}
                     Stats end=samples.back();ng.push_back(double(std::max(base.nodes,1)-end.nodes)/std::max(base.nodes,1));lg.push_back(double(std::max(base.level,1)-end.level)/std::max(base.level,1));
-                    if(step==tail && (!hastail||better(end,tailstats))){hastail=true;tailbest=p;tailstats=end;}
+                    if(step==tail && (!hastail||better(end,tailstats,c))){hastail=true;tailbest=p;tailstats=end;}
                 }
                 auto moments=[&](const std::vector<double>&v,int off){if(v.empty())return;double sum=0,variance=0;for(double z:v)sum+=z;double mean=sum/v.size();for(double z:v)variance+=(z-mean)*(z-mean);x[off]=mean;x[off+1]=*std::max_element(v.begin(),v.end());x[off+2]=std::sqrt(variance/v.size());};
                 moments(ng,4);moments(lg,7);scores[a]=policies[step][a].score(x,c.alpha);
@@ -315,7 +323,9 @@ static Seq linucb(Engine &e) {
         current.push_back(selected);Stats now=e.eval(current).s;e.event("linucb_step",step+1,current,now.nodes);
         auto found=depthbest.find(step+1);
         if(found!=depthbest.end()) {
-            int target=found->second.origin;double gap=std::max(double(now.nodes-found->second.s.nodes)/std::max(e.initial.nodes,1),0.);
+            int target=found->second.origin;double gap=c.objective=="level"
+                ? std::max(double(now.level-found->second.s.level)/std::max(e.initial.level,1),0.)
+                : std::max(double(now.nodes-found->second.s.nodes)/std::max(e.initial.nodes,1),0.);
             if(gap>c.back && target<step && !backtracked[target]) {
                 backtracked[target]=true;excluded[target].insert(current[target]);current.resize(target);
                 for(int s=target;s<c.length;++s){policies[s]=std::vector<LinearArm>(n,LinearArm(c.lambda));rngs[s].seed(c.seed+s);}
@@ -327,6 +337,7 @@ static Seq linucb(Engine &e) {
 static void help() {
     Abc_Print(1,"Native SynSearch: search the current strashed network in memory.\n"
       "usage: synsearch [--algorithm mcts|hybrid|sa|ucb1|ucb1-prefix|linucb] [options]\n"
+      "  --objective legacy|nodes|level (default legacy; explicit objective overrides reward weights)\n"
       "  --sequence-length N / --steps N  --search-iterations N  --episodes N\n"
       "  --seed N  --actions balance,rewrite,rewrite-z,...  --debug-search\n"
       "  --cpuct F  --mu-discount F  --ucb-c F  --spike-factor F  --severe-negative-reward F\n"
@@ -357,6 +368,7 @@ static bool parse(int argc,char **argv,Config &c) {
     for(const auto &kv:args){double v;
         if(ints.count(kv.first)){if(!number(kv.second,v)||v<0||v>1000000||v!=std::floor(v))return false;*ints[kv.first]=int(v);}
         else if(floats.count(kv.first)){if(!number(kv.second,v)||(v<0&&kv.first!="--severe-negative-reward"))return false;*floats[kv.first]=v;}
+        else if(kv.first=="--objective")c.objective=kv.second;
         else if(kv.first=="--output")c.output=kv.second;
         else if(kv.first=="--csv")c.csv=kv.second;
         else if(kv.first=="--actions") {
@@ -364,6 +376,13 @@ static bool parse(int argc,char **argv,Config &c) {
             while(std::getline(in,label,',')){bool found=false;for(const auto &a:catalog)if(label==a.label||label==a.command){if(!seen.insert(a.label).second)return false;c.actions.push_back(a);found=true;break;}if(!found){Abc_Print(-1,"Unknown action: %s. Use action labels from the README.\n",label.c_str());return false;}}
             if(c.actions.empty())return false;
         }else{Abc_Print(-1,"Unknown option: %s.\n",kv.first.c_str());return false;}
+    }
+    if(c.objective!="legacy"&&c.objective!="nodes"&&c.objective!="level")return false;
+    // Explicit single-metric objectives apply to all policy decisions. Legacy
+    // remains byte-for-byte compatible with the previous objective semantics.
+    if(c.objective!="legacy") {
+        c.aw=c.objective=="nodes"?1:0;c.lw=c.objective=="level"?1:0;
+        c.levelweight=c.objective=="level"?1:0;
     }
     if(c.actions.empty()){if(bandit){for(int a:{1,2,3,4,0,5,6})c.actions.push_back(catalog[a]);}else c.actions.assign(catalog,catalog+7);}
     return c.iterations>0&&c.episodes>0&&c.warmepisodes>0&&c.topk>0&&c.streak>0&&c.lambda>0&&c.mintemp>0&&c.aw+c.lw>0&&c.discount<=1&&c.levelweight<=1&&c.spike>0&& (c.method!="linucb"|| (c.rollouts>0&&c.horizon>0));
@@ -389,7 +408,7 @@ static int command(Abc_Frame_t *frame,int argc,char **argv) {
     double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
     std::ostringstream recipe;for(size_t i=0;i<result.size();++i){if(i)recipe<<"; ";recipe<<c.actions[result[i]].command;}
     if(json.is_open()) {
-        json<<std::setprecision(17)<<"{\"schema_version\":1,\"implementation\":\"native C++ SynSearch\",\"algorithm\":"<<quote(c.method)<<",\"design_name\":"<<quote(name)<<",\"seed\":"<<c.seed
+        json<<std::setprecision(17)<<"{\"schema_version\":1,\"implementation\":\"native C++ SynSearch\",\"algorithm\":"<<quote(c.method)<<",\"objective\":"<<quote(c.objective)<<",\"design_name\":"<<quote(name)<<",\"seed\":"<<c.seed
             <<",\"sequence\":"<<e.sequence(result)<<",\"commands\":"<<e.sequence(result,true)<<",\"recipe\":"<<quote(recipe.str())
             <<",\"initial_and\":"<<e.initial.nodes<<",\"initial_lev\":"<<e.initial.level<<",\"final_and\":"<<final.s.nodes<<",\"final_lev\":"<<final.s.level
             <<",\"total_runtime_sec\":"<<seconds<<",\"evaluations\":"<<e.evaluations<<",\"cache_hits\":"<<e.hits

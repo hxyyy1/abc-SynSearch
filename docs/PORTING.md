@@ -19,6 +19,17 @@ All native algorithms reside in `src/extSynSearch/synsearch.cpp`. They use ABC's
 in-process command dispatcher for operators and own duplicated `Abc_Ntk_t`
 networks with RAII. No search policy is executed by an external runtime.
 
+## Explicit single-metric objective extension
+
+The preserved decisions below describe the default `--objective legacy` mode.
+The added `--objective nodes|level` modes intentionally adapt those decisions:
+MCTS and Hybrid use pure target-metric rewards; Hybrid ranks branches by the
+same target; SA and both UCB variants use single-metric weights; LinUCB switches
+its reward, tail/depth-best ordering and backtrack gap to the selected target.
+The other metric breaks LinUCB ties, while the node-spike guard is unchanged.
+These experimental modes are not claimed to reproduce original SynSearch
+trajectories. JSON results record the explicit objective.
+
 ## Preserved decisions
 
 - MCTS expands all actions, uses uniform priors and lexicographically greatest

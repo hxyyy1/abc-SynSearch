@@ -77,7 +77,7 @@ class NativeSearchTests(unittest.TestCase):
                     self.assertEqual(a[key], b[key])
 
     def test_invalid_options_and_missing_network(self):
-        for options in ('--algorithm missing', '--steps -1', '--cpuct nan', '--lambda 0',
+        for options in ('--objective invalid', '--algorithm missing', '--steps -1', '--cpuct nan', '--lambda 0',
                         '--actions unknown', '--actions balance,balance', '--steps 1 --sequence-length 2',
                         '--output', '--episodes 0', '--unknown value'):
             out = run(f'read_blif {self.design}; strash; synsearch {options}')
@@ -130,6 +130,38 @@ class NativeSearchTests(unittest.TestCase):
             text=True, capture_output=True, timeout=120)
         self.assertIn('original network restored', output.stdout + output.stderr)
         self.assertRegex(output.stdout, r'and\s*=\s*2675')
+
+    def test_single_metric_objectives_match_exhaustive_one_step(self):
+        # One-step action enumeration is an independent oracle for the policies,
+        # including LinUCB's tail comparison and Hybrid's branch comparison.
+        import re
+        actions = ('balance', 'rewrite-z', 'refactor')
+        observed = []
+        for action in actions:
+            output = run(f'read {ROOT / "i10.aig"}; strash; {action.replace("-z", " -z")}; print_stats')
+            match = re.search(r'and\s*=\s*(\d+).*lev\s*=\s*(\d+)', output.stdout)
+            self.assertIsNotNone(match, output.stdout)
+            observed.append(tuple(map(int, match.groups())))
+        self.assertNotEqual(min(observed)[1], min(x[1] for x in observed),
+                            'Oracle must distinguish node and level objectives')
+        for objective, column in (('nodes', 0), ('level', 1)):
+            for method in METHODS:
+                with self.subTest(objective=objective, method=method):
+                    output = self.work / f'{objective}-{method}.json'
+                    completed = run(f'read {ROOT / "i10.aig"}; strash; synsearch '
+                        f'--algorithm {method} --objective {objective} --steps 1 '
+                        '--search-iterations 50 --episodes 6 --warmup-steps 1 '
+                        '--warmup-episodes 6 --warmup-top-k 3 --long-term-horizon 1 '
+                        f'--actions {",".join(actions)} --output {output}; cec {ROOT / "i10.aig"}')
+                    self.assertTrue(output.exists(), completed.stdout + completed.stderr)
+                    result = json.loads(output.read_text())
+                    self.assertEqual(result['objective'], objective)
+                    self.assertEqual(result['final_and' if column == 0 else 'final_lev'],
+                                     min(x[column] for x in observed))
+                    self.assertEqual(result['config']['and_weight'], 1-column)
+                    self.assertEqual(result['config']['lev_weight'], column)
+                    self.assertEqual(result['config']['level_reward_weight'], column)
+                    self.assertIn('Networks are equivalent', completed.stdout)
 
     def test_current_network_can_be_used_again(self):
         out = run(f'read_blif {self.design}; strash; synsearch --steps 1 --search-iterations 1; '

@@ -64,6 +64,43 @@ names and matching by input/output order is appropriate.
 ./abc -s -c 'read i10.aig; strash; synsearch --algorithm linucb --steps 10 --episodes 20 --alpha 1.5 --lambda 1 --long-term-rollouts 1 --long-term-horizon 3'
 ```
 
+### Single-metric experiments
+
+`--objective nodes` minimizes AIG node count; `--objective level` minimizes
+logic depth. The default `--objective legacy` preserves the original algorithm
+semantics documented in `docs/PORTING.md`. Explicit objectives override
+`--and-weight`, `--lev-weight`, and `--level-reward-weight`; they also switch
+MCTS/Hybrid reward and branch comparisons, plus LinUCB tail/depth-best comparisons
+and its backtrack gap. LinUCB uses the other metric only to break primary-metric
+ties. The existing node-spike guard remains active. These modes adapt the
+project's policies to single-metric tasks, rather than reproducing the reference
+algorithms' original mixed objectives.
+
+```sh
+./abc -s -c 'read_blif benchmarks/VTR/bfly.abc.blif; strash; synsearch --algorithm mcts --objective level --steps 10 --output level.json'
+python3 tools/synsearch/vtr_objectives.py --out /path/to/fresh/results --workers 3
+```
+
+The VTR driver runs six methods, two objectives and seeds 0/1/2, records original
+and resyn2 baselines, pins workers to distinct physical cores, and verifies
+combinational equivalence across unchanged latch boundaries. See its manifest
+for explicit method budgets; equal sequence lengths do not mean equal compute.
+Search and CEC have separate timeouts. Completed run folders can be resumed
+only when the recorded source, binary, driver and experiment settings match.
+
+To export comparison tables, install `python-docx` and `XlsxWriter` in your Python
+environment, then run:
+
+```sh
+python3 tools/synsearch/summarize_vtr_objectives.py /path/to/results --out /path/to/tables
+```
+
+The exports include both best-of-three and mean/standard-deviation results,
+per-run CSV records, an Excel workbook, and a Word experiment report. All
+expected runs and their CEC checks must succeed before the final tables are
+produced. The memory-constrained VTR configuration uses three workers by default;
+size concurrency for the account's cgroup limit, not just the machine's free RAM.
+
 ### Parameters and actions
 
 `--steps` and `--sequence-length` are aliases. MCTS iterations apply at every

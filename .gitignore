@@ -65,3 +65,4 @@ __pycache__/
 
 # Optional reference-comparison caches
 .mabsyn_work/
+output/
